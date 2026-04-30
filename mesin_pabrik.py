@@ -1,5 +1,6 @@
 import os
 import time
+import requests
 import yfinance as yf
 from supabase import create_client, Client
 
@@ -8,10 +9,21 @@ url = os.environ.get("SUPABASE_URL")
 key = os.environ.get("SUPABASE_KEY")
 supabase: Client = create_client(url, key)
 
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+
+def kirim_telegram(pesan):
+    if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
+        api_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": pesan, "parse_mode": "Markdown"}
+        try:
+            requests.post(api_url, json=payload)
+        except Exception as e:
+            print("Gagal kirim Telegram:", e)
+
 # 1. MEMBACA BUKU ABSEN (saham_idx.txt)
 try:
     with open("saham_idx.txt", "r") as file:
-        # Membaca setiap baris, membersihkan spasi, dan membuang baris kosong
         DAFTAR_SAHAM = [line.strip() for line in file if line.strip()]
 except FileNotFoundError:
     print("ERROR: File saham_idx.txt tidak ditemukan!")
@@ -51,19 +63,36 @@ for i, ticker in enumerate(DAFTAR_SAHAM):
                     "status": status
                 })
         
-        # REM TANGAN: Jeda 0.5 detik per saham agar Yahoo tidak memblokir IP kita
+        # Jeda 0.5 detik per saham
         time.sleep(0.5) 
         
     except Exception as e:
         print(f"Gagal memproses {ticker}: {e}")
 
-# 3. SIMPAN KE GUDANG SUPABASE
+# 3. SIMPAN KE GUDANG & KIRIM LAPORAN TELEGRAM
 if len(hasil_scan) > 0:
     print("Membersihkan data kadaluarsa dari gudang...")
     supabase.table("screener_results").delete().eq("bursa", "IDX").execute()
     
     print(f"Menyimpan {len(hasil_scan)} saham pilihan ke Supabase...")
     supabase.table("screener_results").insert(hasil_scan).execute()
+    
+    # Merangkum Laporan untuk Telegram
+    jml_gc = sum(1 for s in hasil_scan if s["status"] == "🔥 Golden Cross")
+    jml_rebound = sum(1 for s in hasil_scan if s["status"] == "📈 Rebound")
+    jml_downtrend = sum(1 for s in hasil_scan if s["status"] == "🔻 Downtrend")
+
+    pesan = f"🏗️ **LAPORAN HARIAN MANDOR CUANDERLAND** 🏗️\n\n"
+    pesan += f"Pabrik selesai memindai *{len(DAFTAR_SAHAM)} saham IDX*.\n"
+    pesan += f"Ditemukan *{len(hasil_scan)} saham* masuk radar hari ini:\n\n"
+    pesan += f"🔥 Golden Cross: {jml_gc} saham\n"
+    pesan += f"📈 Rebound: {jml_rebound} saham\n"
+    pesan += f"🔻 Downtrend: {jml_downtrend} saham\n\n"
+    pesan += f"Segera buka Terminal Cuanderland untuk eksekusi, Bung!"
+    
+    kirim_telegram(pesan)
     print("PROSES SELESAI!")
 else:
-    print("Pasar sedang jelek. Tidak ada saham masuk kriteria.")
+    pesan_kosong = f"🏗️ **LAPORAN HARIAN MANDOR CUANDERLAND** 🏗️\n\nPabrik selesai memindai *{len(DAFTAR_SAHAM)} saham IDX*.\nPasar sedang jelek, tidak ada saham yang memenuhi kriteria hari ini."
+    kirim_telegram(pesan_kosong)
+    print("Pasar sedang jelek. Laporan kosong terkirim.")
