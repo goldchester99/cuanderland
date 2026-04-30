@@ -1,4 +1,5 @@
 import os
+import time
 import yfinance as yf
 from supabase import create_client, Client
 
@@ -7,32 +8,33 @@ url = os.environ.get("SUPABASE_URL")
 key = os.environ.get("SUPABASE_KEY")
 supabase: Client = create_client(url, key)
 
-# Bung bisa taruh 850 saham IDX di sini. 
-# Sebagai contoh, saya pasang 15 saham dulu. Sisanya tinggal ditambah pakai koma.
-DAFTAR_SAHAM = [
-    "BBCA", "BBRI", "BMRI", "BBNI", "TLKM", "ASII", "GOTO", "AMMN", 
-    "ADRO", "PGAS", "PTBA", "ITMG", "UNVR", "ICBP", "MEDC"
-]
+# 1. MEMBACA BUKU ABSEN (saham_idx.txt)
+try:
+    with open("saham_idx.txt", "r") as file:
+        # Membaca setiap baris, membersihkan spasi, dan membuang baris kosong
+        DAFTAR_SAHAM = [line.strip() for line in file if line.strip()]
+except FileNotFoundError:
+    print("ERROR: File saham_idx.txt tidak ditemukan!")
+    exit()
 
-print("PABRIK CUANDERLAND BEROPERASI...")
+print(f"PABRIK CUANDERLAND BEROPERASI... Total Target: {len(DAFTAR_SAHAM)} Saham")
 hasil_scan = []
 
-for ticker in DAFTAR_SAHAM:
+# 2. PROSES SCANNING
+for i, ticker in enumerate(DAFTAR_SAHAM):
     yf_ticker = f"{ticker}.JK"
-    print(f"Menganalisa {ticker}...")
+    print(f"[{i+1}/{len(DAFTAR_SAHAM)}] Menganalisa {ticker}...")
+    
     try:
-        # Tarik data
         df = yf.download(yf_ticker, period="3mo", progress=False)
         if not df.empty:
             df['MA20'] = df['Close'].rolling(window=20).mean()
             df['MA50'] = df['Close'].rolling(window=50).mean()
             
-            # Wajib dikonversi ke float biasa agar bisa masuk ke Supabase
             close_t = float(df['Close'].iloc[-1].item())
             ma20_t = float(df['MA20'].iloc[-1].item())
             ma50_t = float(df['MA50'].iloc[-1].item())
             
-            # Logika Filter
             status = "Netral"
             if ma20_t > ma50_t and close_t > ma50_t:
                 status = "🔥 Golden Cross"
@@ -48,13 +50,16 @@ for ticker in DAFTAR_SAHAM:
                     "harga": close_t,
                     "status": status
                 })
+        
+        # REM TANGAN: Jeda 0.5 detik per saham agar Yahoo tidak memblokir IP kita
+        time.sleep(0.5) 
+        
     except Exception as e:
         print(f"Gagal memproses {ticker}: {e}")
 
-# Proses Simpan ke Gudang
+# 3. SIMPAN KE GUDANG SUPABASE
 if len(hasil_scan) > 0:
     print("Membersihkan data kadaluarsa dari gudang...")
-    # Hapus data lama agar tidak dobel
     supabase.table("screener_results").delete().eq("bursa", "IDX").execute()
     
     print(f"Menyimpan {len(hasil_scan)} saham pilihan ke Supabase...")
