@@ -3,11 +3,12 @@ import streamlit.components.v1 as components
 from supabase import create_client, Client
 import yfinance as yf
 import pandas as pd
+import json
 
 st.set_page_config(page_title="Cuanderland Terminal", layout="wide")
 
-st.title("🏗️ Cuanderland Trading Terminal")
-st.write("Selamat datang di Markas Besar!")
+st.title("🏗️ Cuanderland Hybrid Terminal")
+st.write("Terminal Trading Terintegrasi: Advanced Widget + AI Lightweight Lab.")
 
 # --- KONEKSI KE SUPABASE ---
 @st.cache_resource
@@ -18,113 +19,109 @@ def init_connection():
 
 supabase: Client = init_connection()
 
-tab_terminal, tab_screener = st.tabs(["🖥️ Terminal Utama", "📡 Radar Screener"])
+# KITA TAMBAH TAB KETIGA: AI CHART LAB
+tab_terminal, tab_screener, tab_ai_lab = st.tabs(["🖥️ Terminal Utama", "📡 Radar Screener", "🧪 AI Chart Lab"])
+
+# --- LOAD WATCHLIST ---
+try:
+    response = supabase.table("watchlist").select("*").execute()
+    data_saham = response.data
+    list_ticker = [f"{s['ticker']} ({s['bursa']})" for s in data_saham] if data_saham else []
+except:
+    list_ticker = []
 
 # ==========================================
-# RUANG 1: TERMINAL UTAMA & TRADINGVIEW
+# TAB 1: TERMINAL UTAMA (ADVANCED WIDGET)
 # ==========================================
 with tab_terminal:
-    col_kiri, col_kanan = st.columns([1, 2.8])
+    if list_ticker:
+        pilihan = st.selectbox("Pilih Saham (Deep Analysis):", list_ticker, key="tab1_select")
+        ticker = pilihan.split(" ")[0]
+        bursa = pilihan.split("(")[1].replace(")", "")
+        tv_symbol = f"IDX:{ticker}" if bursa == "IDX" else ticker
 
-    with col_kiri:
-        st.subheader("⭐ Tambah Watchlist")
-        input_ticker = st.text_input("Kode Saham (Contoh: BBCA, NVDA)")
-        input_bursa = st.selectbox("Pilih Bursa", ["IDX", "NYSE"])
-        
-        if st.button("Simpan Saham"):
-            if input_ticker:
-                try:
-                    supabase.table("watchlist").insert({"ticker": input_ticker.upper(), "bursa": input_bursa}).execute()
-                    st.success(f"Saham {input_ticker.upper()} tersimpan!")
-                    st.rerun() 
-                except Exception as e:
-                    st.error(f"Gagal simpan: {e}")
-
-        st.divider()
-        st.subheader("📋 Daftar Pantauan")
-        try:
-            response = supabase.table("watchlist").select("*").execute()
-            data_saham = response.data
-            if data_saham:
-                for saham in data_saham:
-                    st.info(f"**{saham['ticker']}** - {saham['bursa']}")
-            else:
-                st.write("Watchlist kosong.")
-        except Exception as e:
-            st.error(f"DB Error: {e}")
-
-    with col_kanan:
-        if 'data_saham' in locals() and data_saham:
-            list_ticker = [f"{s['ticker']} ({s['bursa']})" for s in data_saham]
-            pilihan = st.selectbox("Pilih saham untuk dianalisa:", list_ticker)
-            
-            ticker_pilihan = pilihan.split(" ")[0]
-            bursa_pilihan = pilihan.split("(")[1].replace(")", "")
-            yf_ticker = f"{ticker_pilihan}.JK" if bursa_pilihan == "IDX" else ticker_pilihan
-            tv_symbol = f"IDX:{ticker_pilihan}" if bursa_pilihan == "IDX" else ticker_pilihan
-
-            st.subheader(f"📈 Analisa Teknikal: {ticker_pilihan}")
-
-            # --- TRADINGVIEW WIDGET (TINGGI 800PX) ---
-            html_tradingview = f"""
-            <div class="tradingview-widget-container" style="height:800px; width:100%;">
-              <div class="tradingview-widget-container__widget" style="height:100%; width:100%;"></div>
-              <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js" async>
-              {{
-              "autosize": true,
-              "symbol": "{tv_symbol}",
-              "interval": "D",
-              "timezone": "Asia/Jakarta",
-              "theme": "dark",
-              "style": "1",
-              "locale": "en",
-              "allow_symbol_change": true,
-              "details": true,
-              "hotlist": true,
-              "save_image": true,
-              "withdateranges": true,
-              "range": "YTD",
+        # Advanced Widget: Fitur lengkap, tools gambar lengkap
+        html_adv = f"""
+        <div style="height:750px;">
+            <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js" async>
+            {{
+              "autosize": true, "symbol": "{tv_symbol}", "interval": "D", "timezone": "Asia/Jakarta",
+              "theme": "dark", "style": "1", "locale": "en", "hide_side_toolbar": false,
+              "allow_symbol_change": true, "save_image": true, "details": true, "hotlist": true,
               "studies": ["MASimple@tv-basicstudies", "RSI@tv-basicstudies"]
             }}
-              </script>
-            </div>
-            """
-            components.html(html_tradingview, height=800) # Pastikan tinggi sinkron[cite: 1]
-
-            # --- FUNDAMENTAL DATA ---
-            st.divider()
-            try:
-                info = yf.Ticker(yf_ticker).info
-                col_f1, col_f2, col_f3, col_f4 = st.columns(4)
-                with col_f1: st.metric("P/E Ratio", f"{info.get('trailingPE', 0):.2f}x")
-                with col_f2: st.metric("PBV", f"{info.get('priceToBook', 0):.2f}x")
-                with col_f3: st.metric("ROE", f"{info.get('returnOnEquity', 0)*100:.2f}%")
-                with col_f4:
-                    div = info.get('dividendYield', 0)
-                    div_str = f"{div:.2f}%" if div > 1 else f"{div*100:.2f}%"
-                    st.metric("Div. Yield", div_str)
-            except: st.warning("Data fundamental terbatas.")
-        else:
-            st.info("👈 Isi Watchlist dulu, Bung!")
+            </script>
+        </div>
+        """
+        components.html(html_adv, height=750)
+    else:
+        st.info("Watchlist kosong. Tambahkan saham di kolom kiri.")
 
 # ==========================================
-# RUANG 2: RADAR SCREENER (DATA PABRIK)
+# TAB 2: RADAR SCREENER (DATA PABRIK)
 # ==========================================
 with tab_screener:
-    st.subheader("📡 Radar Screener Otomatis")
-    col_s1, col_s2 = st.columns(2)
-    with col_s1: target = st.radio("Target Scan:", ["Hanya Watchlist (Live)", "Seluruh Pasar IDX (Gudang)"])
-    with col_s2: kriteria = st.selectbox("Pilih Filter:", ["Golden Cross", "Rebound", "Downtrend"])
+    st.subheader("📡 Radar Hasil Scan Pabrik")
+    res = supabase.table("screener_results").select("*").execute()
+    if res.data:
+        df_res = pd.DataFrame(res.data)
+        st.dataframe(df_res[['ticker', 'harga', 'status']], use_container_width=True)
+    else:
+        st.warning("Belum ada data di gudang.")
+
+# ==========================================
+# TAB 3: AI CHART LAB (LIGHTWEIGHT CHARTS)
+# ==========================================
+with tab_ai_lab:
+    st.subheader("🧪 AI Lightweight Lab")
+    st.write("Grafik performa tinggi. Data disuplai langsung oleh AI untuk analisa real-time.")
     
-    if st.button("Jalankan Radar"):
-        if "Gudang" in target:
-            res = supabase.table("screener_results").select("*").execute()
-            df_gudang = pd.DataFrame(res.data)
-            if not df_gudang.empty:
-                # Filter berdasarkan kata kunci status
-                mask = df_gudang['status'].str.contains(kriteria, case=False)
-                st.dataframe(df_gudang[mask][['ticker', 'harga', 'status']], use_container_width=True)
-            else: st.warning("Gudang kosong.")
-        else:
-            st.write("Melakukan live scan pada watchlist...")
-            # (Gunakan logika live scan seperti di versi sebelumnya)
+    if list_ticker:
+        pilihan_ai = st.selectbox("Pilih Saham (AI Analysis):", list_ticker, key="tab3_select")
+        ticker_ai = pilihan_ai.split(" ")[0]
+        yf_ticker = f"{ticker_ai}.JK" if "IDX" in pilihan_ai else ticker_ai
+        
+        # Tarik data manual untuk disuplai ke Lightweight Charts
+        df_ai = yf.download(yf_ticker, period="6mo", interval="1d", progress=False)
+        
+        if not df_ai.empty:
+            # Format data ke JSON untuk Lightweight Charts
+            chart_data = []
+            for index, row in df_ai.iterrows():
+                chart_data.append({
+                    "time": index.strftime('%Y-%m-%d'),
+                    "open": float(row['Open']),
+                    "high": float(row['High']),
+                    "low": float(row['Low']),
+                    "close": float(row['Close'])
+                })
+            
+            # HTML & JS untuk Lightweight Charts
+            # AI bisa "melihat" data ini karena kita yang menyuplainya ke script JS
+            html_lw = f"""
+            <div id="chart" style="height:500px; width:100%;"></div>
+            <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+            <script>
+                const chart = LightweightCharts.createChart(document.getElementById('chart'), {{
+                    layout: {{ backgroundColor: '#0F0F0F', textColor: '#DDD' }},
+                    grid: {{ vertLines: {{ color: '#222' }}, horzLines: {{ color: '#222' }} }},
+                    timeScale: {{ borderColor: '#444' }}
+                }});
+                const candleSeries = chart.addCandlestickSeries();
+                candleSeries.setData({json.dumps(chart_data)});
+                chart.timeScale().fitContent();
+            </script>
+            """
+            components.html(html_lw, height=520)
+            
+            # --- BAGIAN ANALISA AI ---
+            st.divider()
+            st.info(f"🤖 **AI Analysis for {ticker_ai}:**")
+            last_price = df_ai['Close'].iloc[-1].item()
+            prev_price = df_ai['Close'].iloc[-2].item()
+            change = ((last_price - prev_price) / prev_price) * 100
+            
+            st.write(f"Harga terakhir terpantau di **{last_price:,.0f}** ({change:+.2f}%).")
+            # Di sini Bung bisa menambah logika AI lebih dalam karena datanya (df_ai) sudah kita pegang.
+    else:
+        st.info("Watchlist kosong.")
