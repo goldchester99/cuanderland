@@ -1,0 +1,30 @@
+name: Radar Pabrik Cuanderland
+
+on:
+  schedule:
+    # Berjalan jam 10:00 UTC (Sama dengan Jam 17:00 WIB sore)
+    # Jadwal: Senin sampai Jumat (1-5)
+    - cron: '0 10 * * 1-5'
+  workflow_dispatch: # Memunculkan tombol supaya bisa kita klik manual buat ngetes
+
+jobs:
+  scan-saham-idx:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Tarik Blueprint dari Repo
+        uses: actions/checkout@v3
+        
+      - name: Siapkan Mesin Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          
+      - name: Install Material (Supabase, Pandas, YFinance)
+        run: |
+          pip install supabase yfinance pandas
+          
+      - name: Nyalakan Mesin Pabrik!
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python mesin_pabrik.py
