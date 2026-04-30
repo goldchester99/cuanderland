@@ -10,7 +10,6 @@ st.set_page_config(page_title="Cuanderland Terminal", layout="wide")
 st.title("🏗️ Cuanderland Trading Terminal")
 st.write("Selamat datang di Markas Besar, Bung Arsitek!")
 
-# --- KONEKSI KE SUPABASE ---
 @st.cache_resource
 def init_connection():
     url = st.secrets["SUPABASE_URL"]
@@ -19,7 +18,6 @@ def init_connection():
 
 supabase: Client = init_connection()
 
-# --- MEMBUAT RUANGAN (TABS) ---
 tab_terminal, tab_screener = st.tabs(["🖥️ Terminal Utama", "📡 Radar Screener"])
 
 # ==========================================
@@ -118,25 +116,19 @@ with tab_terminal:
                             st.metric("ROE", f"{roe*100:.2f}%" if roe else "N/A")
                         with col_f4:
                             div = info.get('dividendYield', 0)
-                            if div:
-                                div_str = f"{div:.2f}%" if div > 1 else f"{div*100:.2f}%"
-                            else:
-                                div_str = "N/A"
+                            if div: div_str = f"{div:.2f}%" if div > 1 else f"{div*100:.2f}%"
+                            else: div_str = "N/A"
                             st.metric("Div. Yield", div_str)
                         
                         last_close = df['Close'].iloc[-1].item()
                         last_ma20 = df['MA20'].iloc[-1].item()
                         last_ma50 = df['MA50'].iloc[-1].item()
 
-                        st.write("**Kesimpulan Sinyal Teknikal (Berdasarkan Tren):**")
-                        if last_close > last_ma20 and last_ma20 > last_ma50:
-                            st.success("🟢 **STRONG BUY** (Harga di atas MA20 & MA50, Uptrend kuat)")
-                        elif last_close > last_ma20 and last_close < last_ma50:
-                            st.info("🟡 **HOLD / SPECULATIVE BUY** (Harga mulai memotong MA20, bersiap rebound)")
-                        elif last_close < last_ma20 and last_close < last_ma50:
-                            st.error("🔴 **STRONG SELL** (Harga di bawah MA20 & MA50, Downtrend kuat)")
-                        else:
-                            st.warning("⚪ **NETRAL** (Konsolidasi / Sideways)")
+                        st.write("**Kesimpulan Sinyal Teknikal:**")
+                        if last_close > last_ma20 and last_ma20 > last_ma50: st.success("🟢 **STRONG BUY** (Uptrend kuat)")
+                        elif last_close > last_ma20 and last_close < last_ma50: st.info("🟡 **HOLD / SPECULATIVE BUY** (Potensi rebound)")
+                        elif last_close < last_ma20 and last_close < last_ma50: st.error("🔴 **STRONG SELL** (Downtrend kuat)")
+                        else: st.warning("⚪ **NETRAL**")
                 except Exception as e:
                     st.error(f"Gagal memuat chart: {e}")
         else:
@@ -148,16 +140,9 @@ with tab_terminal:
 with tab_screener:
     st.subheader("📡 Radar Screener Otomatis")
     
-    # DAFTAR SAHAM BLUECHIP UNTUK DITES SCAN
-    TOP_IDX = [
-        "BBCA", "BBRI", "BMRI", "BBNI", "TLKM", "ASII", "GOTO", "AMMN", 
-        "BREN", "TPIA", "ADRO", "UNVR", "ICBP", "INDF", "KLBF", "PGAS", 
-        "PTBA", "UNTR", "ITMG", "ANTM", "MEDC", "AKRA", "BRPT", "CPIN", "POGO"
-    ]
-
     col_s1, col_s2 = st.columns(2)
     with col_s1:
-        target_scan = st.radio("Target Scan:", ["Hanya Watchlist Saya", "Top 25 Saham IDX (Bluechips)"])
+        target_scan = st.radio("Target Scan:", ["Hanya Watchlist Saya (Live Scan)", "Seluruh Pasar IDX (Data Pabrik)"])
     with col_s2:
         kriteria = st.selectbox("Pilih Kriteria Screener:", [
             "1. Golden Cross (MA20 Nembus MA50 ke atas)",
@@ -166,64 +151,75 @@ with tab_screener:
         ])
     
     if st.button("Jalankan Radar Sekarang"):
-        # Tentukan daftar saham yang mau di-scan berdasarkan pilihan
-        if target_scan == "Hanya Watchlist Saya":
-            if 'data_saham' in locals() and data_saham:
-                list_scan = [{"ticker": s['ticker'], "bursa": s['bursa']} for s in data_saham]
-            else:
-                list_scan = []
-                st.error("Watchlist masih kosong!")
-        else:
-            list_scan = [{"ticker": t, "bursa": "IDX"} for t in TOP_IDX]
-
-        if len(list_scan) > 0:
-            hasil_scan = []
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            total_saham = len(list_scan)
-            
-            for i, saham in enumerate(list_scan):
-                ticker = saham['ticker']
-                bursa = saham['bursa']
-                yf_ticker = f"{ticker}.JK" if bursa == "IDX" else ticker
-                
-                status_text.text(f"Menganalisa {ticker}... ({i+1}/{total_saham})")
-                
+        # JIKA PILIH SCAN PASAR (AMBIL DARI DATABASE PABRIK)
+        if target_scan == "Seluruh Pasar IDX (Data Pabrik)":
+            with st.spinner("Mengambil data matang dari pabrik..."):
                 try:
-                    df_scan = yf.download(yf_ticker, period="3mo", progress=False)
-                    if not df_scan.empty:
-                        df_scan['MA20'] = df_scan['Close'].rolling(window=20).mean()
-                        df_scan['MA50'] = df_scan['Close'].rolling(window=50).mean()
-                        
-                        close_terakhir = df_scan['Close'].iloc[-1].item()
-                        ma20_terakhir = df_scan['MA20'].iloc[-1].item()
-                        ma50_terakhir = df_scan['MA50'].iloc[-1].item()
-                        
-                        # Logika Screener
-                        if "Golden Cross" in kriteria:
-                            if ma20_terakhir > ma50_terakhir and close_terakhir > ma50_terakhir:
-                                hasil_scan.append({"Ticker": ticker, "Bursa": bursa, "Harga": round(close_terakhir, 2), "Status": "🔥 Golden Cross"})
-                        
-                        elif "Rebound" in kriteria:
-                            if close_terakhir > ma20_terakhir:
-                                hasil_scan.append({"Ticker": ticker, "Bursa": bursa, "Harga": round(close_terakhir, 2), "Status": "📈 Rebound"})
+                    response = supabase.table("screener_results").select("*").execute()
+                    data_pabrik = response.data
+                    
+                    if data_pabrik:
+                        hasil_filter = []
+                        for row in data_pabrik:
+                            # Cocokkan kriteria dropdown dengan status dari database
+                            if "Golden Cross" in kriteria and row['status'] == "🔥 Golden Cross":
+                                hasil_filter.append(row)
+                            elif "Rebound" in kriteria and row['status'] == "📈 Rebound":
+                                hasil_filter.append(row)
+                            elif "Downtrend" in kriteria and row['status'] == "🔻 Downtrend":
+                                hasil_filter.append(row)
                                 
-                        elif "Downtrend" in kriteria:
-                            if close_terakhir < ma20_terakhir and close_terakhir < ma50_terakhir:
-                                hasil_scan.append({"Ticker": ticker, "Bursa": bursa, "Harga": round(close_terakhir, 2), "Status": "🔻 Downtrend"})
-                                
+                        st.divider()
+                        if len(hasil_filter) > 0:
+                            st.success(f"Ditemukan {len(hasil_filter)} saham dari pabrik!")
+                            # Rapikan tabel sebelum ditampilkan
+                            df_hasil = pd.DataFrame(hasil_filter)
+                            df_hasil = df_hasil[['ticker', 'bursa', 'harga', 'status']] # Susun kolom
+                            st.dataframe(df_hasil, use_container_width=True)
+                        else:
+                            st.warning("Tidak ada saham di pabrik yang memenuhi kriteria ini.")
+                    else:
+                        st.error("Gudang pabrik kosong. Pastikan GitHub Actions sudah berjalan.")
                 except Exception as e:
-                    pass 
+                    st.error(f"Gagal mengambil data pabrik: {e}")
+
+        # JIKA PILIH SCAN WATCHLIST (LIVE SCAN SEPERTI BIASA)
+        else:
+            if 'data_saham' in locals() and data_saham:
+                hasil_scan = []
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                total_saham = len(data_saham)
                 
-                progress_bar.progress((i + 1) / total_saham)
-            
-            status_text.text("Analisa Selesai!")
-            
-            st.divider()
-            if len(hasil_scan) > 0:
-                st.success(f"Berhasil menemukan {len(hasil_scan)} saham yang masuk kriteria!")
-                df_hasil = pd.DataFrame(hasil_scan)
-                st.dataframe(df_hasil, use_container_width=True)
+                for i, saham in enumerate(data_saham):
+                    ticker = saham['ticker']
+                    bursa = saham['bursa']
+                    yf_ticker = f"{ticker}.JK" if bursa == "IDX" else ticker
+                    status_text.text(f"Menganalisa {ticker}... ({i+1}/{total_saham})")
+                    try:
+                        df_scan = yf.download(yf_ticker, period="3mo", progress=False)
+                        if not df_scan.empty:
+                            df_scan['MA20'] = df_scan['Close'].rolling(window=20).mean()
+                            df_scan['MA50'] = df_scan['Close'].rolling(window=50).mean()
+                            close_terakhir = df_scan['Close'].iloc[-1].item()
+                            ma20_terakhir = df_scan['MA20'].iloc[-1].item()
+                            ma50_terakhir = df_scan['MA50'].iloc[-1].item()
+                            
+                            if "Golden Cross" in kriteria and (ma20_terakhir > ma50_terakhir and close_terakhir > ma50_terakhir):
+                                hasil_scan.append({"ticker": ticker, "bursa": bursa, "harga": round(close_terakhir, 2), "status": "🔥 Golden Cross"})
+                            elif "Rebound" in kriteria and (close_terakhir > ma20_terakhir):
+                                hasil_scan.append({"ticker": ticker, "bursa": bursa, "harga": round(close_terakhir, 2), "status": "📈 Rebound"})
+                            elif "Downtrend" in kriteria and (close_terakhir < ma20_terakhir and close_terakhir < ma50_terakhir):
+                                hasil_scan.append({"ticker": ticker, "bursa": bursa, "harga": round(close_terakhir, 2), "status": "🔻 Downtrend"})
+                    except Exception as e: pass 
+                    progress_bar.progress((i + 1) / total_saham)
+                
+                status_text.text("Analisa Selesai!")
+                st.divider()
+                if len(hasil_scan) > 0:
+                    st.success(f"Berhasil menemukan {len(hasil_scan)} saham dari Watchlist!")
+                    st.dataframe(pd.DataFrame(hasil_scan), use_container_width=True)
+                else:
+                    st.warning("Tidak ada saham Watchlist yang memenuhi kriteria.")
             else:
-                st.warning("Tidak ada saham yang memenuhi kriteria ini hari ini.")
+                st.error("Watchlist masih kosong!")
