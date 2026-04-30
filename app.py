@@ -1,8 +1,7 @@
 import streamlit as st
+import streamlit.components.v1 as components # Modul baru untuk nempel HTML TradingView
 from supabase import create_client, Client
 import yfinance as yf
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import pandas as pd
 
 st.set_page_config(page_title="Cuanderland Terminal", layout="wide")
@@ -57,7 +56,7 @@ with tab_terminal:
             st.error(f"Gagal mengambil data dari database: {e}")
 
     with col_kanan:
-        st.subheader("📈 Analisa Teknikal & Trading Plan")
+        st.subheader("📈 Analisa Teknikal (Powered by TradingView)")
         
         if 'data_saham' in locals() and data_saham:
             list_ticker = [f"{s['ticker']} ({s['bursa']})" for s in data_saham]
@@ -67,70 +66,78 @@ with tab_terminal:
             bursa_pilihan = pilihan.split("(")[1].replace(")", "")
             yf_ticker = f"{ticker_pilihan}.JK" if bursa_pilihan == "IDX" else ticker_pilihan
             
-            col_plan1, col_plan2, col_plan3 = st.columns(3)
-            with col_plan1:
-                harga_entry = st.number_input("Garis Entry", value=0.0, step=10.0)
-            with col_plan2:
-                harga_tp = st.number_input("Garis Take Profit", value=0.0, step=10.0)
-            with col_plan3:
-                harga_sl = st.number_input("Garis Stop Loss", value=0.0, step=10.0)
+            # --- MENGATUR KODE EMITEN UNTUK TRADINGVIEW ---
+            if bursa_pilihan == "IDX":
+                tv_symbol = f"IDX:{ticker_pilihan}"
+            else:
+                tv_symbol = ticker_pilihan # Untuk saham US, biarkan namanya langsung (misal: NVDA)
 
-            with st.spinner(f"Merakit data {ticker_pilihan}..."):
+            # --- MENANAM WIDGET TRADINGVIEW ---
+            # Perhatikan penggunaan {{ dan }} agar kodenya tidak error saat digabung dengan Python
+            html_tradingview = f"""
+            <!-- TradingView Widget BEGIN -->
+            <div class="tradingview-widget-container" style="height:600px;width:100%">
+              <div class="tradingview-widget-container__widget" style="height:calc(100% - 32px);width:100%"></div>
+              <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js" async>
+              {{
+              "allow_symbol_change": true,
+              "calendar": false,
+              "details": true,
+              "hide_side_toolbar": false,
+              "hide_top_toolbar": false,
+              "hide_legend": false,
+              "hide_volume": false,
+              "hotlist": true,
+              "interval": "D",
+              "locale": "en",
+              "save_image": true,
+              "style": "1",
+              "symbol": "{tv_symbol}",
+              "theme": "dark",
+              "timezone": "Asia/Jakarta",
+              "backgroundColor": "#0F0F0F",
+              "gridColor": "rgba(242, 242, 242, 0.06)",
+              "watchlist": [],
+              "withdateranges": true,
+              "range": "YTD",
+              "show_popup_button": true,
+              "popup_height": "650",
+              "popup_width": "1000",
+              "autosize": true
+            }}
+              </script>
+            </div>
+            <!-- TradingView Widget END -->
+            """
+            
+            # Menampilkan HTML murni ke dalam Streamlit
+            components.html(html_tradingview, height=600)
+
+            # --- TETAP TAMPILKAN DATA FUNDAMENTAL ---
+            st.divider()
+            with st.spinner("Mengambil data Fundamental dari Yahoo Finance..."):
                 try:
-                    df = yf.download(yf_ticker, period="6mo", progress=False)
+                    st.subheader(f"📊 Fundamental {ticker_pilihan}")
+                    info = yf.Ticker(yf_ticker).info
                     
-                    if not df.empty:
-                        df['MA20'] = df['Close'].rolling(window=20).mean()
-                        df['MA50'] = df['Close'].rolling(window=50).mean()
+                    col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+                    with col_f1:
+                        pe = info.get('trailingPE', 0)
+                        st.metric("P/E Ratio", f"{pe:.2f}x" if pe else "N/A")
+                    with col_f2:
+                        pbv = info.get('priceToBook', 0)
+                        st.metric("PBV", f"{pbv:.2f}x" if pbv else "N/A")
+                    with col_f3:
+                        roe = info.get('returnOnEquity', 0)
+                        st.metric("ROE", f"{roe*100:.2f}%" if roe else "N/A")
+                    with col_f4:
+                        div = info.get('dividendYield', 0)
+                        if div: div_str = f"{div:.2f}%" if div > 1 else f"{div*100:.2f}%"
+                        else: div_str = "N/A"
+                        st.metric("Div. Yield", div_str)
+                except:
+                    st.warning("Data fundamental gagal dimuat saat ini.")
 
-                        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.7, 0.3])
-                        
-                        fig.add_trace(go.Candlestick(x=df.index, open=df['Open'].squeeze(), high=df['High'].squeeze(), low=df['Low'].squeeze(), close=df['Close'].squeeze(), name="Harga"), row=1, col=1)
-                        fig.add_trace(go.Scatter(x=df.index, y=df['MA20'].squeeze(), line=dict(color='blue', width=1), name='MA20'), row=1, col=1)
-                        fig.add_trace(go.Scatter(x=df.index, y=df['MA50'].squeeze(), line=dict(color='orange', width=1), name='MA50'), row=1, col=1)
-                        
-                        colors = ['green' if close >= open else 'red' for close, open in zip(df['Close'].squeeze(), df['Open'].squeeze())]
-                        fig.add_trace(go.Bar(x=df.index, y=df['Volume'].squeeze(), marker_color=colors, name='Volume'), row=2, col=1)
-                        
-                        if harga_entry > 0: fig.add_hline(y=harga_entry, line_dash="dash", line_color="blue", annotation_text="ENTRY", row=1, col=1)
-                        if harga_tp > 0: fig.add_hline(y=harga_tp, line_dash="solid", line_color="green", annotation_text="TAKE PROFIT", row=1, col=1)
-                        if harga_sl > 0: fig.add_hline(y=harga_sl, line_dash="dashdot", line_color="red", annotation_text="STOP LOSS", row=1, col=1)
-
-                        fig.update_layout(title=f"Grafik {ticker_pilihan}", template="plotly_dark", margin=dict(l=20, r=20, t=40, b=20), showlegend=False, height=500)
-                        fig.update_xaxes(rangeslider_visible=False) 
-                        st.plotly_chart(fig, use_container_width=True)
-
-                        st.divider()
-                        st.subheader(f"📊 Fundamental & Sinyal {ticker_pilihan}")
-                        info = yf.Ticker(yf_ticker).info
-                        
-                        col_f1, col_f2, col_f3, col_f4 = st.columns(4)
-                        with col_f1:
-                            pe = info.get('trailingPE', 0)
-                            st.metric("P/E Ratio", f"{pe:.2f}x" if pe else "N/A")
-                        with col_f2:
-                            pbv = info.get('priceToBook', 0)
-                            st.metric("PBV", f"{pbv:.2f}x" if pbv else "N/A")
-                        with col_f3:
-                            roe = info.get('returnOnEquity', 0)
-                            st.metric("ROE", f"{roe*100:.2f}%" if roe else "N/A")
-                        with col_f4:
-                            div = info.get('dividendYield', 0)
-                            if div: div_str = f"{div:.2f}%" if div > 1 else f"{div*100:.2f}%"
-                            else: div_str = "N/A"
-                            st.metric("Div. Yield", div_str)
-                        
-                        last_close = df['Close'].iloc[-1].item()
-                        last_ma20 = df['MA20'].iloc[-1].item()
-                        last_ma50 = df['MA50'].iloc[-1].item()
-
-                        st.write("**Kesimpulan Sinyal Teknikal:**")
-                        if last_close > last_ma20 and last_ma20 > last_ma50: st.success("🟢 **STRONG BUY** (Uptrend kuat)")
-                        elif last_close > last_ma20 and last_close < last_ma50: st.info("🟡 **HOLD / SPECULATIVE BUY** (Potensi rebound)")
-                        elif last_close < last_ma20 and last_close < last_ma50: st.error("🔴 **STRONG SELL** (Downtrend kuat)")
-                        else: st.warning("⚪ **NETRAL**")
-                except Exception as e:
-                    st.error(f"Gagal memuat chart: {e}")
         else:
             st.info("👈 Tambahkan saham ke Watchlist terlebih dahulu.")
 
@@ -151,7 +158,6 @@ with tab_screener:
         ])
     
     if st.button("Jalankan Radar Sekarang"):
-        # JIKA PILIH SCAN PASAR (AMBIL DARI DATABASE PABRIK)
         if target_scan == "Seluruh Pasar IDX (Data Pabrik)":
             with st.spinner("Mengambil data matang dari pabrik..."):
                 try:
@@ -161,7 +167,6 @@ with tab_screener:
                     if data_pabrik:
                         hasil_filter = []
                         for row in data_pabrik:
-                            # Cocokkan kriteria dropdown dengan status dari database
                             if "Golden Cross" in kriteria and row['status'] == "🔥 Golden Cross":
                                 hasil_filter.append(row)
                             elif "Rebound" in kriteria and row['status'] == "📈 Rebound":
@@ -172,9 +177,7 @@ with tab_screener:
                         st.divider()
                         if len(hasil_filter) > 0:
                             st.success(f"Ditemukan {len(hasil_filter)} saham dari pabrik!")
-                            # Rapikan tabel sebelum ditampilkan
-                            df_hasil = pd.DataFrame(hasil_filter)
-                            df_hasil = df_hasil[['ticker', 'bursa', 'harga', 'status']] # Susun kolom
+                            df_hasil = pd.DataFrame(hasil_filter)[['ticker', 'bursa', 'harga', 'status']]
                             st.dataframe(df_hasil, use_container_width=True)
                         else:
                             st.warning("Tidak ada saham di pabrik yang memenuhi kriteria ini.")
@@ -183,7 +186,6 @@ with tab_screener:
                 except Exception as e:
                     st.error(f"Gagal mengambil data pabrik: {e}")
 
-        # JIKA PILIH SCAN WATCHLIST (LIVE SCAN SEPERTI BIASA)
         else:
             if 'data_saham' in locals() and data_saham:
                 hasil_scan = []
@@ -211,7 +213,7 @@ with tab_screener:
                                 hasil_scan.append({"ticker": ticker, "bursa": bursa, "harga": round(close_terakhir, 2), "status": "📈 Rebound"})
                             elif "Downtrend" in kriteria and (close_terakhir < ma20_terakhir and close_terakhir < ma50_terakhir):
                                 hasil_scan.append({"ticker": ticker, "bursa": bursa, "harga": round(close_terakhir, 2), "status": "🔻 Downtrend"})
-                    except Exception as e: pass 
+                    except: pass 
                     progress_bar.progress((i + 1) / total_saham)
                 
                 status_text.text("Analisa Selesai!")
