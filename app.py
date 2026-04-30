@@ -4,7 +4,6 @@ from supabase import create_client, Client
 import yfinance as yf
 import pandas as pd
 import json
-import numpy as np
 
 st.set_page_config(page_title="Cuanderland Dashboard", layout="wide")
 
@@ -17,38 +16,54 @@ def init_connection():
 
 supabase: Client = init_connection()
 
-# --- FUNGSI ANALISA AI (SI MANDOR) ---
-def analisa_mandor(df, ticker):
-    # Flatten columns jika multi-index
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
+# --- FUNGSI ANALISA MANDOR (Cerewet Edition) ---
+def analisa_mandor_v2(df, ticker):
+    # Ambil data terakhir
+    c = float(df['Close'].iloc[-1])
+    h = float(df['High'].iloc[-1])
+    l = float(df['Low'].iloc[-1])
+    o = float(df['Open'].iloc[-1])
+    v = float(df['Volume'].iloc[-1])
+    v_avg = float(df['Volume'].tail(20).mean())
     
-    last_close = float(df['Close'].iloc[-1])
     ma20 = float(df['Close'].rolling(20).mean().iloc[-1])
     ma50 = float(df['Close'].rolling(50).mean().iloc[-1])
     
-    # Simple RSI
+    # Kalkulasi RSI
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss
-    rsi = 100 - (100 / (1,0 + rs)).iloc[-1]
+    rsi = 100 - (100 / (1.0 + rs)).iloc[-1]
 
-    # Logika Komentar
-    komentar = []
-    if last_close > ma20 > ma50:
-        komentar.append(f"🟢 **STRENGHT:** {ticker} dalam tren naik (Uptrend) yang kokoh. Posisi harga di atas MA20 dan MA50.")
-    elif last_close < ma20 < ma50:
-        komentar.append(f"🔴 **BEWARE:** Tren sedang turun tajam. Hindari 'tangkap pisau jatuh' sebelum ada konfirmasi rebound.")
+    laporan = []
     
-    if rsi > 70: komentar.append(f"⚠️ **OVERBOUGHT:** RSI di level {rsi:.0f}. Sudah terlalu jenuh beli, rawan aksi ambil untung (profit taking).")
-    elif rsi < 30: komentar.append(f"✅ **OVERSOLD:** RSI di level {rsi:.0f}. Sudah jenuh jual, ada potensi rebound teknikal.")
-    else: komentar.append(f"⚖️ **NEUTRAL:** RSI stabil di {rsi:.0f}, pergerakan harga masih mencari arah.")
+    # 1. Analisa Tren
+    if c > ma20 > ma50:
+        laporan.append(f"🚀 **BULLISH STRONG:** {ticker} sedang terbang tinggi di atas MA20 dan MA50. Tren naik sangat kuat.")
+    elif c > ma20 and ma20 < ma50:
+        laporan.append(f"📈 **POTENTIAL REVERSAL:** Harga mulai menembus MA20 ke atas. Ada tanda-tanda pembalikan arah!")
+    elif c < ma20 < ma50:
+        laporan.append(f"📉 **BEARISH:** Tren turun parah. Harga masih di bawah tekanan MA20.")
 
-    return komentar
+    # 2. Analisa Volume
+    if v > v_avg * 1.5:
+        laporan.append(f"🔥 **HIGH VOLUME:** Transaksi hari ini meledak {v/v_avg:.1f}x lipat dari biasanya. Ada akumulasi atau distribusi besar!")
+    
+    # 3. Analisa Candlestick Sederhana
+    if c > o and (h - c) < (c - o) * 0.2:
+        laporan.append(f"🟢 **SOLID GREEN:** Buyer mendominasi penuh hari ini tanpa perlawanan berarti.")
+    elif c < o and (c - l) < (o - c) * 0.2:
+        laporan.append(f"🔴 **SOLID RED:** Seller menang telak. Tekanan jual sangat masif.")
+
+    # 4. Analisa Momentum (RSI)
+    if rsi > 70: laporan.append(f"⚠️ **OVERBOUGHT:** RSI {rsi:.0f} (Jenuh Beli). Hati-hati rawan profit taking!")
+    elif rsi < 30: laporan.append(f"✅ **OVERSOLD:** RSI {rsi:.0f} (Jenuh Jual). Harga sudah diskon besar, siap-siap pantulan!")
+    
+    return laporan
 
 # ==========================================
-# HEADER & LOGIC DATA
+# HEADER & WATCHLIST
 # ==========================================
 st.title("🏗️ Cuanderland Hybrid Dashboard")
 
@@ -58,7 +73,6 @@ try:
     list_ticker = [f"{s['ticker']} ({s['bursa']})" for s in data_w] if data_w else []
 except: list_ticker = []
 
-# Pilih Saham Aktif untuk Dashboard
 if list_ticker:
     saham_aktif = st.selectbox("🎯 Fokus Saham:", list_ticker)
     t_aktif = saham_aktif.split(" ")[0]
@@ -66,25 +80,19 @@ if list_ticker:
     tv_symbol = f"IDX:{t_aktif}" if b_aktif == "IDX" else t_aktif
     yf_ticker = f"{t_aktif}.JK" if b_aktif == "IDX" else t_aktif
 else:
-    st.warning("Tambahkan saham ke Watchlist di kuadran bawah!")
+    st.warning("Tambahkan saham di kuadran bawah!")
     st.stop()
 
 # ==========================================
 # BARIS ATAS: CHART & FUNDAMENTAL
 # ==========================================
 col_chart, col_fund = st.columns([3, 1])
-
 with col_chart:
     st.subheader(f"📈 Chart: {t_aktif}")
     html_tv = f"""
     <div style="height:600px;">
         <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js" async>
-        {{
-          "autosize": true, "symbol": "{tv_symbol}", "interval": "D", "timezone": "Asia/Jakarta",
-          "theme": "dark", "style": "1", "locale": "en", "hide_side_toolbar": false,
-          "allow_symbol_change": true, "details": false, "hotlist": false,
-          "studies": ["MASimple@tv-basicstudies", "RSI@tv-basicstudies"]
-        }}
+        {{ "autosize": true, "symbol": "{tv_symbol}", "interval": "D", "theme": "dark", "style": "1", "locale": "en", "studies": ["MASimple@tv-basicstudies", "RSI@tv-basicstudies"] }}
         </script>
     </div>
     """
@@ -107,81 +115,72 @@ st.divider()
 # BARIS BAWAH: WATCHLIST & SCREENER
 # ==========================================
 col_watch, col_screen = st.columns([1, 1.2])
-
 with col_watch:
     st.subheader("⭐ Watchlist Manager")
-    with st.expander("➕ Tambah Saham Baru"):
-        in_t = st.text_input("Kode (Ticker)")
+    with st.expander("➕ Tambah Saham"):
+        in_t = st.text_input("Kode")
         in_b = st.selectbox("Bursa", ["IDX", "NYSE"])
         if st.button("Simpan"):
-            supabase.table("watchlist").insert({{"ticker": in_t.upper(), "bursa": in_b}}).execute()
-            st.success("Tersimpan!")
+            supabase.table("watchlist").insert({"ticker": in_t.upper(), "bursa": in_b}).execute()
             st.rerun()
-    
-    # List Ticker Sederhana
-    for item in list_ticker:
-        st.text(f"• {item}")
+    for item in list_ticker: st.text(f"• {item}")
 
 with col_screen:
     st.subheader("📡 Interactive Screener")
-    # Bagian ini yang Bung tanyakan "Gimana mau screening?"
     try:
         res_s = supabase.table("screener_results").select("*").execute()
         df_s = pd.DataFrame(res_s.data)
-        
         if not df_s.empty:
-            # Filter Interaktif
-            filter_status = st.multiselect("Saring Status:", df_s['status'].unique(), default=df_s['status'].unique())
-            search_t = st.text_input("Cari Ticker...")
-            
-            # Aplikasi Filter
-            df_filtered = df_s[df_s['status'].isin(filter_status)]
-            if search_t:
-                df_filtered = df_filtered[df_filtered['ticker'].str.contains(search_t.upper())]
-            
-            st.dataframe(df_filtered[['ticker', 'harga', 'status']], use_container_width=True, height=300)
-        else:
-            st.info("Pabrik belum scan hari ini.")
-    except: st.error("Koneksi Radar terputus.")
+            f_status = st.multiselect("Filter Status:", df_s['status'].unique(), default=df_s['status'].unique())
+            df_f = df_s[df_s['status'].isin(f_status)]
+            st.dataframe(df_f[['ticker', 'harga', 'status']], use_container_width=True, height=250)
+    except: st.error("Koneksi Screener bermasalah.")
 
 # ==========================================
-# AI ANALYST DESK (DETAILED LAB)
+# AI ANALYST DESK (DETAILED & FIXED)
 # ==========================================
 st.divider()
 st.subheader("🧪 AI Analyst Desk (Detailed Lab)")
 
-df_ai = yf.download(yf_ticker, period="6mo", interval="1d", progress=False)
-if not df_ai.empty:
-    # Flatten Columns Fix
-    if isinstance(df_ai.columns, pd.MultiIndex):
-        df_ai.columns = df_ai.columns.get_level_values(0)
-
-    # Lightweight Chart Fix (Hitam & Transparan)
-    c_data = []
-    for idx, row in df_ai.iterrows():
-        c_data.append({{"time": idx.strftime('%Y-%m-%d'), "open": float(row['Open']), "high": float(row['High']), "low": float(row['Low']), "close": float(row['Close'])}})
+with st.spinner("Mandor sedang menghitung..."):
+    df_ai = yf.download(yf_ticker, period="6mo", interval="1d", progress=False)
     
-    html_lw = f"""
-    <div id="chart" style="height:400px; width:100%; background-color: #0e1117;"></div>
-    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
-    <script>
-        const chart = LightweightCharts.createChart(document.getElementById('chart'), {{
-            width: document.getElementById('chart').offsetWidth,
-            height: 400,
-            layout: {{ backgroundColor: '#0e1117', textColor: '#d1d4dc' }},
-            grid: {{ vertLines: {{ color: 'rgba(42, 46, 57, 0.5)' }}, horzLines: {{ color: 'rgba(42, 46, 57, 0.5)' }} }},
-            timeScale: {{ borderColor: 'rgba(197, 203, 206, 0.8)' }},
-        }});
-        const candleSeries = chart.addCandlestickSeries({{ upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350' }});
-        candleSeries.setData({json.dumps(c_data)});
-        chart.timeScale().fitContent();
-    </script>
-    """
-    components.html(html_lw, height=420)
-    
-    # Komentar AI yang Lebih Cerdas
-    notes = analisa_mandor(df_ai, t_aktif)
-    with st.chat_message("assistant"):
-        st.write(f"**Analisa Teknis Mandor untuk {t_aktif}:**")
-        for n in notes:
-            st.write(n)
+    if not df_ai.empty:
+        # --- FIX: FLATTEN MULTI-INDEX ---
+        if isinstance(df_ai.columns, pd.MultiIndex):
+            df_ai.columns = df_ai.columns.get_level_values(0)
+        
+        # --- FIX: ENSURE SCALAR VALUES FOR JSON ---
+        chart_data = []
+        for idx, row in df_ai.iterrows():
+            chart_data.append({
+                "time": idx.strftime('%Y-%m-%d'),
+                "open": float(row['Open'].item() if hasattr(row['Open'], 'item') else row['Open']),
+                "high": float(row['High'].item() if hasattr(row['High'], 'item') else row['High']),
+                "low": float(row['Low'].item() if hasattr(row['Low'], 'item') else row['Low']),
+                "close": float(row['Close'].item() if hasattr(row['Close'], 'item') else row['Close'])
+            })
+        
+        html_lw = f"""
+        <div id="chart" style="height:400px; width:100%; background-color:#0e1117;"></div>
+        <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+        <script>
+            const chart = LightweightCharts.createChart(document.getElementById('chart'), {{
+                layout: {{ backgroundColor: '#0e1117', textColor: '#d1d4dc' }},
+                grid: {{ vertLines: {{ color: '#2b2b2b' }}, horzLines: {{ color: '#2b2b2b' }} }},
+            }});
+            const candleSeries = chart.addCandlestickSeries();
+            candleSeries.setData({json.dumps(chart_data)});
+            chart.timeScale().fitContent();
+        </script>
+        """
+        components.html(html_lw, height=420)
+        
+        # Komentar Mandor yang Lebih Detail
+        notes = analisa_mandor_v2(df_ai, t_aktif)
+        with st.chat_message("assistant"):
+            st.write(f"**Laporan Teknis Mandor untuk {t_aktif}:**")
+            for n in notes:
+                st.markdown(n)
+    else:
+        st.error("Gagal menarik data untuk analisa AI.")
