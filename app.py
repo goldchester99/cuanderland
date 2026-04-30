@@ -1,0 +1,1 @@
+print("Pondasi Terminal Trading")
