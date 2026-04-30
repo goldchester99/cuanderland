@@ -2,7 +2,7 @@ import streamlit as st
 from supabase import create_client, Client
 import yfinance as yf
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots # Alat baru untuk bikin chart bertingkat
+from plotly.subplots import make_subplots
 
 st.set_page_config(page_title="Cuanderland Terminal", layout="wide")
 
@@ -79,35 +79,29 @@ with col_kanan:
         with col_plan3:
             harga_sl = st.number_input("Garis Stop Loss", value=0.0, step=10.0)
 
-        with st.spinner(f"Merakit grafik {ticker_pilihan}..."):
+        with st.spinner(f"Merakit data {ticker_pilihan}..."):
             try:
-                # Tarik data 6 bulan biar indikator MA50 bisa kebentuk
+                # 1. TARIK DATA TEKNIKAL (CHART)
                 df = yf.download(yf_ticker, period="6mo", progress=False)
                 
                 if not df.empty:
-                    # Menghitung Indikator Moving Average (MA20 dan MA50)
                     df['MA20'] = df['Close'].rolling(window=20).mean()
                     df['MA50'] = df['Close'].rolling(window=50).mean()
 
-                    # Bikin kanvas bertingkat: atas 70% (Candle), bawah 30% (Volume)
                     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
                                         vertical_spacing=0.03, row_heights=[0.7, 0.3])
                     
-                    # 1. Gambar Candlestick
                     fig.add_trace(go.Candlestick(x=df.index,
                                     open=df['Open'].squeeze(), high=df['High'].squeeze(),
                                     low=df['Low'].squeeze(), close=df['Close'].squeeze(),
                                     name="Harga"), row=1, col=1)
                     
-                    # 2. Gambar Moving Average
                     fig.add_trace(go.Scatter(x=df.index, y=df['MA20'].squeeze(), line=dict(color='blue', width=1), name='MA20'), row=1, col=1)
                     fig.add_trace(go.Scatter(x=df.index, y=df['MA50'].squeeze(), line=dict(color='orange', width=1), name='MA50'), row=1, col=1)
                     
-                    # 3. Gambar Volume Transaksi
                     colors = ['green' if close >= open else 'red' for close, open in zip(df['Close'].squeeze(), df['Open'].squeeze())]
                     fig.add_trace(go.Bar(x=df.index, y=df['Volume'].squeeze(), marker_color=colors, name='Volume'), row=2, col=1)
                     
-                    # 4. Cetak Garis Trading Plan (Kalau diisi angkanya)
                     if harga_entry > 0:
                         fig.add_hline(y=harga_entry, line_dash="dash", line_color="blue", annotation_text="ENTRY", row=1, col=1)
                     if harga_tp > 0:
@@ -115,18 +109,46 @@ with col_kanan:
                     if harga_sl > 0:
                         fig.add_hline(y=harga_sl, line_dash="dashdot", line_color="red", annotation_text="STOP LOSS", row=1, col=1)
 
-                    # Poles Tampilan
-                    fig.update_layout(
-                        title=f"Grafik Profesional {ticker_pilihan}",
-                        template="plotly_dark",
-                        margin=dict(l=20, r=20, t=40, b=20),
-                        showlegend=False,
-                        height=600 # Bikin grafiknya lebih tinggi biar lega
-                    )
-                    
+                    fig.update_layout(title=f"Grafik Profesional {ticker_pilihan}", template="plotly_dark", margin=dict(l=20, r=20, t=40, b=20), showlegend=False, height=500)
                     fig.update_xaxes(rangeslider_visible=False) 
-                    
                     st.plotly_chart(fig, use_container_width=True)
+
+                    # 2. TARIK DATA FUNDAMENTAL & SINYAL
+                    st.divider()
+                    st.subheader(f"📊 Fundamental & Sinyal {ticker_pilihan}")
+                    
+                    # Ambil info fundamental dari Yahoo Finance
+                    info = yf.Ticker(yf_ticker).info
+                    
+                    col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+                    with col_f1:
+                        pe = info.get('trailingPE', 0)
+                        st.metric("P/E Ratio", f"{pe:.2f}x" if pe else "N/A")
+                    with col_f2:
+                        pbv = info.get('priceToBook', 0)
+                        st.metric("PBV", f"{pbv:.2f}x" if pbv else "N/A")
+                    with col_f3:
+                        roe = info.get('returnOnEquity', 0)
+                        st.metric("ROE", f"{roe*100:.2f}%" if roe else "N/A")
+                    with col_f4:
+                        div = info.get('dividendYield', 0)
+                        st.metric("Div. Yield", f"{div*100:.2f}%" if div else "N/A")
+                    
+                    # Logika Sinyal Sederhana berdasarkan MA
+                    last_close = df['Close'].iloc[-1].item()
+                    last_ma20 = df['MA20'].iloc[-1].item()
+                    last_ma50 = df['MA50'].iloc[-1].item()
+
+                    st.write("**Kesimpulan Sinyal Teknikal (Berdasarkan Tren):**")
+                    if last_close > last_ma20 and last_ma20 > last_ma50:
+                        st.success("🟢 **STRONG BUY** (Harga di atas MA20 & MA50, Uptrend kuat)")
+                    elif last_close > last_ma20 and last_close < last_ma50:
+                        st.info("🟡 **HOLD / SPECULATIVE BUY** (Harga mulai memotong MA20, bersiap rebound)")
+                    elif last_close < last_ma20 and last_close < last_ma50:
+                        st.error("🔴 **STRONG SELL** (Harga di bawah MA20 & MA50, Downtrend kuat)")
+                    else:
+                        st.warning("⚪ **NETRAL** (Konsolidasi / Sideways)")
+
                 else:
                     st.warning(f"Data tidak ditemukan. Pastikan kode saham benar.")
             except Exception as e:
